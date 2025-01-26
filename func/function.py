@@ -29,7 +29,7 @@ loss_params = {
     'focal_alpha_obj_score': -1.0
 }
 
-# 将参数传入 MultiStepMultiMasksAndIous 类
+
 criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 mask_type = torch.float32
 threshold = (0.1, 0.3, 0.5, 0.7, 0.9)
@@ -39,7 +39,7 @@ threshold = (0.1, 0.3, 0.5, 0.7, 0.9)
 from models.model_single import ModelEmb
 
 
-def structure_loss(pred, mask):  # 这是损失函数 wbce损失和wiou损失
+def structure_loss(pred, mask):  
     weit = 1 + 5 * torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15) - mask)
     wbce = F.binary_cross_entropy_with_logits(pred, mask, reduce='none')
     wbce = (weit * wbce).sum(dim=(2, 3)) / weit.sum(dim=(2, 3))
@@ -98,50 +98,35 @@ def train_sam(args, model_emb, net: nn.Module, optimizer, train_loader, epoch, w
                 vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
                     torch.zeros(1, B, net.hidden_dim)).to(device="cuda")
 
-            # else:
-            #     for element in memory_bank_list:
-            #         to_cat_memory.append(
-            #             (element[0]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_features
-            #         to_cat_memory_pos.append(
-            #             (element[1]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_pos_enc
-            #         to_cat_image_embed.append((element[3]).cuda(non_blocking=True))  # image_embed
-
-            #     memory_stack_ori = torch.stack(to_cat_memory, dim=0)
-            #     memory_pos_stack_ori = torch.stack(to_cat_memory_pos, dim=0)
-            #     image_embed_stack_ori = torch.stack(to_cat_image_embed, dim=0)
-
-            #     vision_feats_temp = vision_feats[-1].permute(1, 0, 2).reshape(B, -1, 64, 64)
-            #     vision_feats_temp = vision_feats_temp.reshape(B, -1)
-
-            #     image_embed_stack_ori = F.normalize(image_embed_stack_ori, p=2, dim=1)
-            #     vision_feats_temp = F.normalize(vision_feats_temp, p=2, dim=1)
-            #     similarity_scores = torch.mm(image_embed_stack_ori, vision_feats_temp.t()).t()
-
-            #     similarity_scores = F.softmax(similarity_scores, dim=1)
-            #     sampled_indices = torch.multinomial(similarity_scores, num_samples=B, replacement=True).squeeze(
-            #         1)  # Shape [batch_size, 16]
-
-            #     memory_stack_ori_new = (memory_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
-            #     memory = memory_stack_ori_new.reshape(-1, memory_stack_ori_new.size(2), memory_stack_ori_new.size(3))
-
-            #     memory_pos_stack_new = (memory_pos_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
-            #     memory_pos = memory_pos_stack_new.reshape(-1, memory_stack_ori_new.size(2),
-            #                                               memory_stack_ori_new.size(3))
-
             else:
                 for element in memory_bank_list:
-                    to_cat_memory.append((element[0]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_features
-                    to_cat_memory_pos.append((element[1]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_pos_enc
+                    to_cat_memory.append(
+                        (element[0]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_features
+                    to_cat_memory_pos.append(
+                        (element[1]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_pos_enc
                     to_cat_image_embed.append((element[3]).cuda(non_blocking=True))  # image_embed
-            
-                # 堆叠记忆特征和位置编码
+
                 memory_stack_ori = torch.stack(to_cat_memory, dim=0)
                 memory_pos_stack_ori = torch.stack(to_cat_memory_pos, dim=0)
                 image_embed_stack_ori = torch.stack(to_cat_image_embed, dim=0)
-            
-                # 直接使用记忆库中的内容，而不进行重采样或相似度计算
-                memory = memory_stack_ori.reshape(-1, memory_stack_ori.size(2), memory_stack_ori.size(3))
-                memory_pos = memory_pos_stack_ori.reshape(-1, memory_pos_stack_ori.size(2), memory_pos_stack_ori.size(3))
+
+                vision_feats_temp = vision_feats[-1].permute(1, 0, 2).reshape(B, -1, 64, 64)
+                vision_feats_temp = vision_feats_temp.reshape(B, -1)
+
+                image_embed_stack_ori = F.normalize(image_embed_stack_ori, p=2, dim=1)
+                vision_feats_temp = F.normalize(vision_feats_temp, p=2, dim=1)
+                similarity_scores = torch.mm(image_embed_stack_ori, vision_feats_temp.t()).t()
+
+                similarity_scores = F.softmax(similarity_scores, dim=1)
+                sampled_indices = torch.multinomial(similarity_scores, num_samples=B, replacement=True).squeeze(
+                    1)  # Shape [batch_size, 16]
+
+                memory_stack_ori_new = (memory_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
+                memory = memory_stack_ori_new.reshape(-1, memory_stack_ori_new.size(2), memory_stack_ori_new.size(3))
+
+                memory_pos_stack_new = (memory_pos_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
+                memory_pos = memory_pos_stack_new.reshape(-1, memory_stack_ori_new.size(2),
+                                                          memory_stack_ori_new.size(3))
                 
 
                 vision_feats[-1] = net.memory_attention(
@@ -223,45 +208,38 @@ def train_sam(args, model_emb, net: nn.Module, optimizer, train_loader, epoch, w
                                              iou_predictions[batch, 0],
                                              image_embed[batch].reshape(-1).detach()])
             else:
-                # for batch in range(maskmem_features.size(0)):
-                    
-                #     # current simlarity matrix in existing memory bank
-                #     memory_bank_maskmem_features_flatten = [element[0].reshape(-1) for element in memory_bank_list]
-                #     memory_bank_maskmem_features_flatten = torch.stack(memory_bank_maskmem_features_flatten)
-
-                #     # normalise
-                #     memory_bank_maskmem_features_norm = F.normalize(memory_bank_maskmem_features_flatten, p=2, dim=1)
-                #     current_similarity_matrix = torch.mm(memory_bank_maskmem_features_norm,
-                #                                          memory_bank_maskmem_features_norm.t())
-
-                #     # replace diagonal (diagnoal always simiarity = 1)
-                #     current_similarity_matrix_no_diag = current_similarity_matrix.clone()
-                #     diag_indices = torch.arange(current_similarity_matrix_no_diag.size(0))
-                #     current_similarity_matrix_no_diag[diag_indices, diag_indices] = float('-inf')
-
-                #     # first find the minimum similarity from memory feature and the maximum similarity from memory bank
-                #     single_key_norm = F.normalize(maskmem_features[batch].reshape(-1), p=2, dim=0).unsqueeze(1)
-                #     similarity_scores = torch.mm(memory_bank_maskmem_features_norm, single_key_norm).squeeze()
-                #     min_similarity_index = torch.argmin(similarity_scores) 
-                #     max_similarity_index = torch.argmax(current_similarity_matrix_no_diag[min_similarity_index])
-
-                #     # replace with less similar object
-                #     if similarity_scores[min_similarity_index] < current_similarity_matrix_no_diag[min_similarity_index][max_similarity_index]:
-                #         # soft iou, not stricly greater than current iou
-                #         if iou_predictions[batch, 0] > memory_bank_list[max_similarity_index][2] - 0.1:
-                #             memory_bank_list.pop(max_similarity_index) 
-                #             memory_bank_list.append([(maskmem_features[batch].unsqueeze(0)).detach(),
-                #                                      (maskmem_pos_enc[batch].unsqueeze(0)).detach(),
-                #                                      iou_predictions[batch, 0],
-                #                                      image_embed[batch].reshape(-1).detach()])
-
                 for batch in range(maskmem_features.size(0)):
-                    memory_bank_list.pop(0)  # 移除最早的记忆
-                    memory_bank_list.append([
-                    maskmem_features[batch].unsqueeze(0).detach(),
-                    maskmem_pos_enc[batch].unsqueeze(0).detach(),
-                     iou_predictions[batch, 0],
-                    image_embed[batch].reshape(-1).detach()])
+                    
+                    # current simlarity matrix in existing memory bank
+                    memory_bank_maskmem_features_flatten = [element[0].reshape(-1) for element in memory_bank_list]
+                    memory_bank_maskmem_features_flatten = torch.stack(memory_bank_maskmem_features_flatten)
+
+                    # normalise
+                    memory_bank_maskmem_features_norm = F.normalize(memory_bank_maskmem_features_flatten, p=2, dim=1)
+                    current_similarity_matrix = torch.mm(memory_bank_maskmem_features_norm,
+                                                         memory_bank_maskmem_features_norm.t())
+
+                    # replace diagonal (diagnoal always simiarity = 1)
+                    current_similarity_matrix_no_diag = current_similarity_matrix.clone()
+                    diag_indices = torch.arange(current_similarity_matrix_no_diag.size(0))
+                    current_similarity_matrix_no_diag[diag_indices, diag_indices] = float('-inf')
+
+                    # first find the minimum similarity from memory feature and the maximum similarity from memory bank
+                    single_key_norm = F.normalize(maskmem_features[batch].reshape(-1), p=2, dim=0).unsqueeze(1)
+                    similarity_scores = torch.mm(memory_bank_maskmem_features_norm, single_key_norm).squeeze()
+                    min_similarity_index = torch.argmin(similarity_scores) 
+                    max_similarity_index = torch.argmax(current_similarity_matrix_no_diag[min_similarity_index])
+
+                    # replace with less similar object
+                    if similarity_scores[min_similarity_index] < current_similarity_matrix_no_diag[min_similarity_index][max_similarity_index]:
+                        # soft iou, not stricly greater than current iou
+                        if iou_predictions[batch, 0] > memory_bank_list[max_similarity_index][2] - 0.1:
+                            memory_bank_list.pop(max_similarity_index) 
+                            memory_bank_list.append([(maskmem_features[batch].unsqueeze(0)).detach(),
+                                                     (maskmem_pos_enc[batch].unsqueeze(0)).detach(),
+                                                     iou_predictions[batch, 0],
+                                                     image_embed[batch].reshape(-1).detach()])
+
     
             # backpropagation
             temp = eval_seg(pred, mask, threshold)
@@ -340,51 +318,38 @@ def validation_sam(args, val_loader, epoch, model_emb, net: nn.Module, CreatMask
                     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
                         torch.zeros(1, B, net.hidden_dim)).to(device="cuda")
 
-                # else:
-                #     for element in memory_bank_list:
-                #         maskmem_features = element[0]
-                #         maskmem_pos_enc = element[1]
-                #         to_cat_memory.append(maskmem_features.cuda(non_blocking=True).flatten(2).permute(2, 0, 1))
-                #         to_cat_memory_pos.append(maskmem_pos_enc.cuda(non_blocking=True).flatten(2).permute(2, 0, 1))
-                #         to_cat_image_embed.append((element[3]).cuda(non_blocking=True))  # image_embed
-
-                #     memory_stack_ori = torch.stack(to_cat_memory, dim=0)
-                #     memory_pos_stack_ori = torch.stack(to_cat_memory_pos, dim=0)
-                #     image_embed_stack_ori = torch.stack(to_cat_image_embed, dim=0)
-
-                #     vision_feats_temp = vision_feats[-1].permute(1, 0, 2).view(B, -1, 64, 64)
-                #     vision_feats_temp = vision_feats_temp.reshape(B, -1)
-
-                #     image_embed_stack_ori = F.normalize(image_embed_stack_ori, p=2, dim=1)
-                #     vision_feats_temp = F.normalize(vision_feats_temp, p=2, dim=1)
-                #     similarity_scores = torch.mm(image_embed_stack_ori, vision_feats_temp.t()).t()
-
-                #     similarity_scores = F.softmax(similarity_scores, dim=1)
-                #     sampled_indices = torch.multinomial(similarity_scores, num_samples=B, replacement=True).squeeze(
-                #         1)  # Shape [batch_size, 16]
-
-                #     memory_stack_ori_new = (memory_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
-                #     memory = memory_stack_ori_new.reshape(-1, memory_stack_ori_new.size(2),
-                #                                           memory_stack_ori_new.size(3))
-
-                #     memory_pos_stack_new = (memory_pos_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
-                #     memory_pos = memory_pos_stack_new.reshape(-1, memory_stack_ori_new.size(2),
-                #                                               memory_stack_ori_new.size(3))
-
                 else:
                     for element in memory_bank_list:
-                        to_cat_memory.append((element[0]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_features
-                        to_cat_memory_pos.append((element[1]).cuda(non_blocking=True).flatten(2).permute(2, 0, 1))  # maskmem_pos_enc
+                        maskmem_features = element[0]
+                        maskmem_pos_enc = element[1]
+                        to_cat_memory.append(maskmem_features.cuda(non_blocking=True).flatten(2).permute(2, 0, 1))
+                        to_cat_memory_pos.append(maskmem_pos_enc.cuda(non_blocking=True).flatten(2).permute(2, 0, 1))
                         to_cat_image_embed.append((element[3]).cuda(non_blocking=True))  # image_embed
-                
-                    # 堆叠记忆特征和位置编码
+
                     memory_stack_ori = torch.stack(to_cat_memory, dim=0)
                     memory_pos_stack_ori = torch.stack(to_cat_memory_pos, dim=0)
                     image_embed_stack_ori = torch.stack(to_cat_image_embed, dim=0)
+
+                    vision_feats_temp = vision_feats[-1].permute(1, 0, 2).view(B, -1, 64, 64)
+                    vision_feats_temp = vision_feats_temp.reshape(B, -1)
+
+                    image_embed_stack_ori = F.normalize(image_embed_stack_ori, p=2, dim=1)
+                    vision_feats_temp = F.normalize(vision_feats_temp, p=2, dim=1)
+                    similarity_scores = torch.mm(image_embed_stack_ori, vision_feats_temp.t()).t()
+
+                    similarity_scores = F.softmax(similarity_scores, dim=1)
+                    sampled_indices = torch.multinomial(similarity_scores, num_samples=B, replacement=True).squeeze(
+                        1)  # Shape [batch_size, 16]
+
+                    memory_stack_ori_new = (memory_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
+                    memory = memory_stack_ori_new.reshape(-1, memory_stack_ori_new.size(2),
+                                                          memory_stack_ori_new.size(3))
+
+                    memory_pos_stack_new = (memory_pos_stack_ori[sampled_indices].squeeze(3).permute(1, 2, 0, 3))
+                    memory_pos = memory_pos_stack_new.reshape(-1, memory_stack_ori_new.size(2),
+                                                              memory_stack_ori_new.size(3))
+
                 
-                    # 直接使用记忆库中的内容，而不进行重采样或相似度计算
-                    memory = memory_stack_ori.reshape(-1, memory_stack_ori.size(2), memory_stack_ori.size(3))
-                    memory_pos = memory_pos_stack_ori.reshape(-1, memory_pos_stack_ori.size(2), memory_pos_stack_ori.size(3))
 
                     vision_feats[-1] = net.memory_attention(
                         curr=[vision_feats[-1]],
@@ -458,53 +423,46 @@ def validation_sam(args, val_loader, epoch, model_emb, net: nn.Module, CreatMask
                                                  image_embed[batch].reshape(-1).detach()])
 
                 else:
-                    # for batch in range(maskmem_features.size(0)):
-
-                    #     memory_bank_maskmem_features_flatten = [element[0].reshape(-1) for element in memory_bank_list]
-                    #     memory_bank_maskmem_features_flatten = torch.stack(memory_bank_maskmem_features_flatten)
-
-                    #     memory_bank_maskmem_features_norm = F.normalize(memory_bank_maskmem_features_flatten, p=2,
-                    #                                                     dim=1)
-                    #     current_similarity_matrix = torch.mm(memory_bank_maskmem_features_norm,
-                    #                                          memory_bank_maskmem_features_norm.t())
-
-                    #     current_similarity_matrix_no_diag = current_similarity_matrix.clone()
-                    #     diag_indices = torch.arange(current_similarity_matrix_no_diag.size(0))
-                    #     current_similarity_matrix_no_diag[diag_indices, diag_indices] = float('-inf')
-
-                    #     single_key_norm = F.normalize(maskmem_features[batch].reshape(-1), p=2, dim=0).unsqueeze(1)
-                    #     similarity_scores = torch.mm(memory_bank_maskmem_features_norm, single_key_norm).squeeze()
-                    #     min_similarity_index = torch.argmin(similarity_scores)
-                    #     max_similarity_index = torch.argmax(current_similarity_matrix_no_diag[min_similarity_index])
-
-                    #     if similarity_scores[min_similarity_index] < \
-                    #             current_similarity_matrix_no_diag[min_similarity_index][max_similarity_index]:
-                    #         if iou_predictions[batch, 0] > memory_bank_list[max_similarity_index][2] - 0.1:
-                    #             memory_bank_list.pop(max_similarity_index)
-                    #             memory_bank_list.append([(maskmem_features[batch].unsqueeze(0)),
-                    #                                      (maskmem_pos_enc[batch].unsqueeze(0)),
-                    #                                      iou_predictions[batch, 0],
-                    #                                      image_embed[batch].reshape(-1).detach()])
-
                     for batch in range(maskmem_features.size(0)):
-                        memory_bank_list.pop(0)  # 移除最早的记忆
-                        memory_bank_list.append([
-                        maskmem_features[batch].unsqueeze(0).detach(),
-                        maskmem_pos_enc[batch].unsqueeze(0).detach(),
-                         iou_predictions[batch, 0],
-                        image_embed[batch].reshape(-1).detach()])
 
+                        memory_bank_maskmem_features_flatten = [element[0].reshape(-1) for element in memory_bank_list]
+                        memory_bank_maskmem_features_flatten = torch.stack(memory_bank_maskmem_features_flatten)
+
+                        memory_bank_maskmem_features_norm = F.normalize(memory_bank_maskmem_features_flatten, p=2,
+                                                                        dim=1)
+                        current_similarity_matrix = torch.mm(memory_bank_maskmem_features_norm,
+                                                             memory_bank_maskmem_features_norm.t())
+
+                        current_similarity_matrix_no_diag = current_similarity_matrix.clone()
+                        diag_indices = torch.arange(current_similarity_matrix_no_diag.size(0))
+                        current_similarity_matrix_no_diag[diag_indices, diag_indices] = float('-inf')
+
+                        single_key_norm = F.normalize(maskmem_features[batch].reshape(-1), p=2, dim=0).unsqueeze(1)
+                        similarity_scores = torch.mm(memory_bank_maskmem_features_norm, single_key_norm).squeeze()
+                        min_similarity_index = torch.argmin(similarity_scores)
+                        max_similarity_index = torch.argmax(current_similarity_matrix_no_diag[min_similarity_index])
+
+                        if similarity_scores[min_similarity_index] < \
+                                current_similarity_matrix_no_diag[min_similarity_index][max_similarity_index]:
+                            if iou_predictions[batch, 0] > memory_bank_list[max_similarity_index][2] - 0.1:
+                                memory_bank_list.pop(max_similarity_index)
+                                memory_bank_list.append([(maskmem_features[batch].unsqueeze(0)),
+                                                         (maskmem_pos_enc[batch].unsqueeze(0)),
+                                                         iou_predictions[batch, 0],
+                                                         image_embed[batch].reshape(-1).detach()])
+
+                  
                 # binary mask and calculate loss, iou, dice
                 total_loss += structure_loss(pred, mask)
                 pred = (pred> 0.5).float()
                 if CreatMask==True:
                     s = (s[1], s[0])
-                    res = F.upsample(pred, size=s, mode='bilinear', align_corners=False)  # 变成和gt一样的大小
+                    res = F.upsample(pred, size=s, mode='bilinear', align_corners=False)  
 
                     res = res.sigmoid().data.cpu().numpy().squeeze()
-                    res = (res - res.min()) / (res.max() - res.min() + 1e-8)  # 转换成png格式
+                    res = (res - res.min()) / (res.max() - res.min() + 1e-8)  
 
-                    cv2.imwrite(save_path+name, res*255)  # 转换成0-255的像素范围
+                    cv2.imwrite(save_path+name, res*255)  
                     
                 temp = eval_seg(pred, mask, threshold)
                 #print(temp[0], temp[1])
